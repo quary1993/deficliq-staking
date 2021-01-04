@@ -1,11 +1,31 @@
-pragma solidity ^0.5.0;
+// SPDX-License-Identifier: GPL-3.0
+
+pragma solidity ^0.7.4;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
-import "@openzeppelin/contracts/access/roles/WhitelistedRole.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract CliqStaking is WhitelistedRole {
+contract CliqStaking is AccessControl {
     using SafeMath for uint256;
+
+    event NativeTokenRewardAdded(address indexed _from, uint256 _val);
+    event NativeTokenRewardRemoved(address indexed _to, uint256 _val);
+    event StakeAdded(
+        address indexed _usr,
+        bytes32 _packageName,
+        uint256 _amount,
+        uint16 _stakeRewardType,
+        uint256 _stakeIndex
+    );
+    event Unstaked(address indexed _usr, uint256 stakeIndex);
+    event ForcefullyWithdrawn(address indexed _usr, uint256 stakeIndex);
+    event FundsParked(
+        address indexed _usr,
+        address indexed _token,
+        uint256 _amount
+    );
+    event ETHParked(address indexed _usr, uint256 _amount);
 
     struct YieldType {
         bytes32 _packageName;
@@ -58,7 +78,7 @@ contract CliqStaking is WhitelistedRole {
 
     address[] stakers;
 
-    uint256 whitelistRoleTokenAllowance = 0;
+    uint256 rewardProviderTokenAllowance = 0;
 
     mapping(address => uint256) public totalStakedBalance;
     mapping(address => Stake[]) public stakes;
@@ -67,14 +87,31 @@ contract CliqStaking is WhitelistedRole {
 
     uint256 cliqRewardUnits = 1000000; // ciq reward for 1.000.000 tokens staked
 
-    constructor(address _stakedToken, address _CLIQ) public {
-        owner = msg.sender;
+    bytes32 public REWARD_PROVIDER = "REWARD_PROVIDER"; // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
+    modifier onlyRewardProvider() {
+        require(
+            hasRole(REWARD_PROVIDER, _msgSender()),
+            "caller does not have the REWARD_PROVIDER role"
+        );
+        _;
+    }
+
+    modifier onlyMaintainer() {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, _msgSender()),
+            "caller does not have the Maintainer role"
+        );
+        _;
+    }
+
+    constructor(address _stakedToken, address _CLIQ) {
+        _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
         tokenContract = IERC20(_stakedToken);
         CLIQ = IERC20(_CLIQ);
         //define packages here
-        definePackage("Silver Package", 30, 15, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
+        definePackage("Silver Package", 30, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
         definePackage("Gold Package", 60, 18, 1500000); // 1.5 cliq for 1 token staked
-        definePackage("Platinum Package", 90, 24, 2000000); // 2 cliq for 1 token staked
+        definePackage("Platinum Package", 90, 30, 2000000); // 2 cliq for 1 token staked
     }
 
     function getAddrTokensBalance(address _address)
@@ -148,6 +185,14 @@ contract CliqStaking is WhitelistedRole {
         //update the bool mapping of past and current stakers
         hasStaked[msg.sender] = true;
         totalStakedFunds = totalStakedFunds.add(_amount);
+
+        StakeAdded(
+            msg.sender,
+            _packageName,
+            _amount,
+            _stakeRewardType,
+            stakes[msg.sender].length - 1
+        );
     }
 
     function checkStakeReward(address _address, uint256 stakeIndex)
@@ -208,12 +253,12 @@ contract CliqStaking is WhitelistedRole {
         uint256 timeDiff = currentTime.sub(stakingTime);
         require(timeDiff > 0, "Staking time cannot be later than current time");
 
-        uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so can fucking test stuff
+        uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
 
         uint256 yieldReward =
             stakes[_address][stakeIndex]._amount.mul(packageCliqInterest);
 
-        yieldReward = yieldReward.div(10**cliqRewardUnits);
+        yieldReward = yieldReward.div(cliqRewardUnits);
 
         yieldReward = yieldReward.mul(yieldPeriods);
 
@@ -274,18 +319,18 @@ contract CliqStaking is WhitelistedRole {
                 _checkStakeReward(msg.sender, stakeIndex, block.timestamp);
 
             require(
-                whitelistRoleTokenAllowance > reward,
+                rewardProviderTokenAllowance > reward,
                 "Token creators did not place enough liquidity in the contract for your reward to be paid"
             );
 
-            whitelistRoleTokenAllowance = whitelistRoleTokenAllowance.sub(
+            rewardProviderTokenAllowance = rewardProviderTokenAllowance.sub(
                 reward
             );
 
             uint256 totalStake =
                 stakes[msg.sender][stakeIndex]._amount.add(reward);
             tokenContract.transfer(msg.sender, totalStake);
-        } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 0) {
+        } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 1) {
             uint256 cliqReward =
                 _checkStakeCliqReward(msg.sender, stakeIndex, block.timestamp);
 
@@ -299,6 +344,8 @@ contract CliqStaking is WhitelistedRole {
                 msg.sender,
                 stakes[msg.sender][stakeIndex]._amount
             );
+        } else {
+            revert();
         }
 
         stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block.timestamp;
@@ -308,6 +355,8 @@ contract CliqStaking is WhitelistedRole {
         totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
             stakes[msg.sender][stakeIndex]._amount
         );
+
+        emit Unstaked(msg.sender, stakeIndex);
     }
 
     function forceWithdraw(uint256 stakeIndex) public {
@@ -331,45 +380,52 @@ contract CliqStaking is WhitelistedRole {
         totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
             stakes[msg.sender][stakeIndex]._amount
         );
+
+        emit ForcefullyWithdrawn(msg.sender, stakeIndex);
     }
 
     function parkFunds(uint256 _parkedAmount, address tokenAddr)
         public
-        onlyWhitelistAdmin
+        onlyMaintainer
         returns (bool)
     {
+        emit FundsParked(msg.sender, tokenAddr, _parkedAmount);
         return IERC20(tokenAddr).transfer(msg.sender, _parkedAmount);
     }
 
-    function parkETH(uint256 _parkedAmount)
-        public
-        onlyWhitelistAdmin
-    {
+    function parkETH(uint256 _parkedAmount) public onlyMaintainer {
+        emit ETHParked(msg.sender, _parkedAmount);
         msg.sender.transfer(_parkedAmount);
     }
 
     function addStakedTokenReward(uint256 _amount)
         public
-        onlyWhitelisted
+        onlyRewardProvider
         returns (bool)
     {
         //transfer from (need allowance)
         tokenContract.transferFrom(msg.sender, address(this), _amount);
-        whitelistRoleTokenAllowance = whitelistRoleTokenAllowance.add(_amount);
+        rewardProviderTokenAllowance = rewardProviderTokenAllowance.add(
+            _amount
+        );
+        emit NativeTokenRewardAdded(msg.sender, _amount);
         return true;
     }
 
     function removeStakedTokenReward(uint256 _amount)
         public
-        onlyWhitelisted
+        onlyRewardProvider
         returns (bool)
     {
         require(
-            _amount <= whitelistRoleTokenAllowance,
+            _amount <= rewardProviderTokenAllowance,
             "you cannot withdraw this amount"
         );
-        whitelistRoleTokenAllowance = whitelistRoleTokenAllowance.sub(_amount);
+        rewardProviderTokenAllowance = rewardProviderTokenAllowance.sub(
+            _amount
+        );
         tokenContract.transfer(msg.sender, _amount);
+        emit NativeTokenRewardRemoved(msg.sender, _amount);
         return true;
     }
 }
