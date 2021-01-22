@@ -167,7 +167,10 @@ contract CliqStaking is AccessControl {
                 ._packageInterest;
 
         uint256 timeDiff = currentTime.sub(stakingTime);
-        require(timeDiff > 0, "Staking time cannot be later than current time");
+        require(
+            timeDiff >= 0,
+            "Staking time cannot be later than current time"
+        );
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so can fucking test stuff
 
@@ -211,7 +214,10 @@ contract CliqStaking is AccessControl {
                 ._packageCliqReward;
 
         uint256 timeDiff = currentTime.sub(stakingTime);
-        require(timeDiff > 0, "Staking time cannot be later than current time");
+        require(
+            timeDiff >= 0,
+            "Staking time cannot be later than current time"
+        );
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
 
