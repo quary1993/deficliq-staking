@@ -1,13 +1,47 @@
 // SPDX-License-Identifier: GPL-3.0
-
 pragma solidity ^0.7.4;
 
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
 
 contract CliqStaking is AccessControl {
     using SafeMath for uint256;
+
+    string public constant name = "Cliq Staking Contract";
+
+    // we can improve this with a "unstaked:false" flag when the user force withdraws the funds
+    // so he can collect the reward later
+    struct Stake {
+        uint256 _amount;
+        uint256 _timestamp;
+        bytes32 _packageName;
+        uint256 _withdrawnTimestamp;
+        uint16 _stakeRewardType; // 0 for native coin reward, 1 for CLIQ stake reward
+    }
+
+    struct YieldType {
+        bytes32 _packageName;
+        uint256 _daysLocked;
+        uint256 _packageInterest;
+        uint256 _packageCliqReward; // the number of cliq token received for each native token staked
+    }
+
+    IERC20 public tokenContract;
+    IERC20 public CLIQ;
+
+    bytes32[] public packageNames;
+    uint256 decimals = 18;
+    mapping(bytes32 => YieldType) public packages;
+    mapping(address => uint256) public totalStakedBalance;
+    mapping(address => Stake[]) public stakes;
+    mapping(address => bool) public hasStaked;
+    address private owner;
+    address[] stakers;
+    uint256 rewardProviderTokenAllowance = 0;
+    uint256 public totalStakedFunds = 0;
+    uint256 cliqRewardUnits = 1000000; // ciq reward for 1.000.000 tokens staked
+    bytes32 public constant REWARD_PROVIDER = keccak256("REWARD_PROVIDER"); // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
 
     event NativeTokenRewardAdded(address indexed _from, uint256 _val);
     event NativeTokenRewardRemoved(address indexed _to, uint256 _val);
@@ -27,67 +61,6 @@ contract CliqStaking is AccessControl {
     );
     event ETHParked(address indexed _usr, uint256 _amount);
 
-    struct YieldType {
-        bytes32 _packageName;
-        uint256 _daysLocked;
-        uint256 _packageInterest;
-        uint256 _packageCliqReward; // the number of cliq token received for each native token staked
-    }
-
-    // we can improve this with a "unstaked:false" flag when the user force withdraws the funds
-    // so he can collect the reward later
-    struct Stake {
-        uint256 _amount;
-        uint256 _timestamp;
-        bytes32 _packageName;
-        uint256 _withdrawnTimestamp;
-        uint16 _stakeRewardType; // 0 for native coin reward, 1 for CLIQ stake reward
-    }
-
-    function toWei(uint256 num) private view returns (uint256) {
-        return num * 10**decimals;
-    }
-
-    function definePackage(
-        bytes32 _name,
-        uint256 _days,
-        uint256 _packageInterest,
-        uint256 _packageCliqReward
-    ) private {
-        YieldType memory package;
-        package._packageName = _name;
-        package._daysLocked = _days;
-        package._packageInterest = _packageInterest;
-        package._packageCliqReward = _packageCliqReward;
-
-        packages[_name] = package;
-        packageNames.push(_name);
-    }
-
-    string public name = "Cliq Staking Contract";
-
-    bytes32[] public packageNames;
-
-    uint256 decimals = 18;
-
-    mapping(bytes32 => YieldType) public packages;
-
-    address private owner;
-    IERC20 public tokenContract;
-    IERC20 public CLIQ;
-
-    address[] stakers;
-
-    uint256 rewardProviderTokenAllowance = 0;
-
-    mapping(address => uint256) public totalStakedBalance;
-    mapping(address => Stake[]) public stakes;
-    mapping(address => bool) public hasStaked;
-    uint256 public totalStakedFunds = 0;
-
-    uint256 cliqRewardUnits = 1000000; // ciq reward for 1.000.000 tokens staked
-
-    bytes32 public REWARD_PROVIDER = "REWARD_PROVIDER"; // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
     modifier onlyRewardProvider() {
         require(
             hasRole(REWARD_PROVIDER, _msgSender()),
@@ -109,33 +82,9 @@ contract CliqStaking is AccessControl {
         tokenContract = IERC20(_stakedToken);
         CLIQ = IERC20(_CLIQ);
         //define packages here
-        definePackage("Silver Package", 30, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
-        definePackage("Gold Package", 60, 18, 1500000); // 1.5 cliq for 1 token staked
-        definePackage("Platinum Package", 90, 30, 2000000); // 2 cliq for 1 token staked
-    }
-
-    function getAddrTokensBalance(address _address)
-        private
-        view
-        returns (uint256 balance)
-    {
-        return tokenContract.balanceOf(_address);
-    }
-
-    function getStakes(address _address, uint256 stakeIndex)
-        external
-        view
-        returns (
-            uint256 amount,
-            uint256 timestamp,
-            bytes32 packageName,
-            uint256 withdrawnTimestamp
-        )
-    {
-        amount = stakes[_address][stakeIndex]._amount;
-        timestamp = stakes[_address][stakeIndex]._timestamp;
-        packageName = stakes[_address][stakeIndex]._packageName;
-        withdrawnTimestamp = stakes[_address][stakeIndex]._withdrawnTimestamp;
+        _definePackage("Silver Package", 30, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
+        _definePackage("Gold Package", 60, 18, 1500000); // 1.5 cliq for 1 token staked
+        _definePackage("Platinum Package", 90, 30, 2000000); // 2 cliq for 1 token staked
     }
 
     function stakesLength(address _address) external view returns (uint256) {
@@ -161,9 +110,6 @@ contract CliqStaking is AccessControl {
             "reward type not known: 0 is native token, 1 is CLIQ"
         );
 
-        //transfer from (need allowance)
-        tokenContract.transferFrom(msg.sender, address(this), _amount);
-
         //add to stake sum of address
         totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].add(
             _amount
@@ -186,6 +132,9 @@ contract CliqStaking is AccessControl {
         hasStaked[msg.sender] = true;
         totalStakedFunds = totalStakedFunds.add(_amount);
 
+        //transfer from (need allowance)
+        tokenContract.transferFrom(msg.sender, address(this), _amount);
+
         StakeAdded(
             msg.sender,
             _packageName,
@@ -196,7 +145,7 @@ contract CliqStaking is AccessControl {
     }
 
     function checkStakeReward(address _address, uint256 stakeIndex)
-        external
+        public
         view
         returns (uint256)
     {
@@ -205,76 +154,11 @@ contract CliqStaking is AccessControl {
             "use checkStakeCliqReward for stakes accumulating reward in CLIQ"
         );
 
-        uint256 withdrawnTimestamp = block.timestamp;
+        uint256 currentTime = block.timestamp;
         if (stakes[_address][stakeIndex]._withdrawnTimestamp != 0) {
-            withdrawnTimestamp = stakes[_address][stakeIndex]
-                ._withdrawnTimestamp;
+            currentTime = stakes[_address][stakeIndex]._withdrawnTimestamp;
         }
 
-        return _checkStakeReward(_address, stakeIndex, withdrawnTimestamp);
-    }
-
-    function checkStakeCliqReward(address _address, uint256 stakeIndex)
-        external
-        view
-        returns (uint256)
-    {
-        require(
-            stakes[_address][stakeIndex]._stakeRewardType == 1,
-            "use checkStakeReward for stakes accumulating reward in the Native Token"
-        );
-
-        uint256 withdrawnTimestamp = block.timestamp;
-        if (stakes[_address][stakeIndex]._withdrawnTimestamp != 0) {
-            withdrawnTimestamp = stakes[_address][stakeIndex]
-                ._withdrawnTimestamp;
-        }
-
-        return _checkStakeCliqReward(_address, stakeIndex, withdrawnTimestamp);
-    }
-
-    function _checkStakeCliqReward(
-        address _address,
-        uint256 stakeIndex,
-        uint256 untilTimestamp
-    ) private view returns (uint256) {
-        require(
-            stakes[_address][stakeIndex]._amount > 0,
-            "The stake you are searching for is not defined"
-        );
-        uint256 currentTime = untilTimestamp;
-        uint256 stakingTime = stakes[_address][stakeIndex]._timestamp;
-        uint256 daysLocked =
-            packages[stakes[_address][stakeIndex]._packageName]._daysLocked;
-        uint256 packageCliqInterest =
-            packages[stakes[_address][stakeIndex]._packageName]
-                ._packageCliqReward;
-
-        uint256 timeDiff = currentTime.sub(stakingTime);
-        require(timeDiff > 0, "Staking time cannot be later than current time");
-
-        uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
-
-        uint256 yieldReward =
-            stakes[_address][stakeIndex]._amount.mul(packageCliqInterest);
-
-        yieldReward = yieldReward.div(cliqRewardUnits);
-
-        yieldReward = yieldReward.mul(yieldPeriods);
-
-        return yieldReward;
-    }
-
-    function _checkStakeReward(
-        address _address,
-        uint256 stakeIndex,
-        uint256 untilTimestamp
-    ) private view returns (uint256) {
-        require(
-            stakes[_address][stakeIndex]._amount > 0,
-            "The stake you are searching for is not defined"
-        );
-        uint256 currentTime = untilTimestamp;
         uint256 stakingTime = stakes[_address][stakeIndex]._timestamp;
         uint256 daysLocked =
             packages[stakes[_address][stakeIndex]._packageName]._daysLocked;
@@ -304,6 +188,43 @@ contract CliqStaking is AccessControl {
         return yieldReward;
     }
 
+    function checkStakeCliqReward(address _address, uint256 stakeIndex)
+        public
+        view
+        returns (uint256)
+    {
+        require(
+            stakes[_address][stakeIndex]._stakeRewardType == 1,
+            "use checkStakeReward for stakes accumulating reward in the Native Token"
+        );
+
+        uint256 currentTime = block.timestamp;
+        if (stakes[_address][stakeIndex]._withdrawnTimestamp != 0) {
+            currentTime = stakes[_address][stakeIndex]._withdrawnTimestamp;
+        }
+
+        uint256 stakingTime = stakes[_address][stakeIndex]._timestamp;
+        uint256 daysLocked =
+            packages[stakes[_address][stakeIndex]._packageName]._daysLocked;
+        uint256 packageCliqInterest =
+            packages[stakes[_address][stakeIndex]._packageName]
+                ._packageCliqReward;
+
+        uint256 timeDiff = currentTime.sub(stakingTime);
+        require(timeDiff > 0, "Staking time cannot be later than current time");
+
+        uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
+
+        uint256 yieldReward =
+            stakes[_address][stakeIndex]._amount.mul(packageCliqInterest);
+
+        yieldReward = yieldReward.div(cliqRewardUnits);
+
+        yieldReward = yieldReward.mul(yieldPeriods);
+
+        return yieldReward;
+    }
+
     function unstake(uint256 stakeIndex) public {
         require(
             stakes[msg.sender][stakeIndex]._amount > 0,
@@ -315,8 +236,7 @@ contract CliqStaking is AccessControl {
         );
 
         if (stakes[msg.sender][stakeIndex]._stakeRewardType == 0) {
-            uint256 reward =
-                _checkStakeReward(msg.sender, stakeIndex, block.timestamp);
+            uint256 reward = checkStakeReward(msg.sender, stakeIndex);
 
             require(
                 rewardProviderTokenAllowance > reward,
@@ -329,15 +249,25 @@ contract CliqStaking is AccessControl {
 
             uint256 totalStake =
                 stakes[msg.sender][stakeIndex]._amount.add(reward);
+
             tokenContract.transfer(msg.sender, totalStake);
         } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 1) {
-            uint256 cliqReward =
-                _checkStakeCliqReward(msg.sender, stakeIndex, block.timestamp);
+            uint256 cliqReward = checkStakeCliqReward(msg.sender, stakeIndex);
 
             require(
                 CLIQ.balanceOf(address(this)) >= cliqReward,
                 "the isn't enough CLIQ in this contract to pay your reward right now"
             );
+
+            totalStakedFunds = totalStakedFunds.sub(
+                stakes[msg.sender][stakeIndex]._amount
+            );
+            totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
+                stakes[msg.sender][stakeIndex]._amount
+            );
+
+            stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block
+                .timestamp;
 
             CLIQ.transfer(msg.sender, cliqReward);
             tokenContract.transfer(
@@ -347,14 +277,6 @@ contract CliqStaking is AccessControl {
         } else {
             revert();
         }
-
-        stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block.timestamp;
-        totalStakedFunds = totalStakedFunds.sub(
-            stakes[msg.sender][stakeIndex]._amount
-        );
-        totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
-            stakes[msg.sender][stakeIndex]._amount
-        );
 
         emit Unstaked(msg.sender, stakeIndex);
     }
@@ -369,15 +291,16 @@ contract CliqStaking is AccessControl {
             "Stake already withdrawn"
         );
 
-        tokenContract.transfer(
-            msg.sender,
-            stakes[msg.sender][stakeIndex]._amount
-        );
         stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block.timestamp;
         totalStakedFunds = totalStakedFunds.sub(
             stakes[msg.sender][stakeIndex]._amount
         );
         totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
+            stakes[msg.sender][stakeIndex]._amount
+        );
+
+        tokenContract.transfer(
+            msg.sender,
             stakes[msg.sender][stakeIndex]._amount
         );
 
@@ -404,10 +327,11 @@ contract CliqStaking is AccessControl {
         returns (bool)
     {
         //transfer from (need allowance)
-        tokenContract.transferFrom(msg.sender, address(this), _amount);
         rewardProviderTokenAllowance = rewardProviderTokenAllowance.add(
             _amount
         );
+        tokenContract.transferFrom(msg.sender, address(this), _amount);
+
         emit NativeTokenRewardAdded(msg.sender, _amount);
         return true;
     }
@@ -427,5 +351,21 @@ contract CliqStaking is AccessControl {
         tokenContract.transfer(msg.sender, _amount);
         emit NativeTokenRewardRemoved(msg.sender, _amount);
         return true;
+    }
+
+    function _definePackage(
+        bytes32 _name,
+        uint256 _days,
+        uint256 _packageInterest,
+        uint256 _packageCliqReward
+    ) private {
+        YieldType memory package;
+        package._packageName = _name;
+        package._daysLocked = _days;
+        package._packageInterest = _packageInterest;
+        package._packageCliqReward = _packageCliqReward;
+
+        packages[_name] = package;
+        packageNames.push(_name);
     }
 }
