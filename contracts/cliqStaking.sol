@@ -241,6 +241,19 @@ contract CliqStaking is AccessControl {
             "Stake already withdrawn"
         );
 
+        // decrease total balance
+        totalStakedFunds = totalStakedFunds.sub(
+            stakes[msg.sender][stakeIndex]._amount
+        );
+
+        //decrease user total staked balance
+        totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
+            stakes[msg.sender][stakeIndex]._amount
+        );
+
+        //close the staking package (fix the withdrawn timestamp)
+        stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block.timestamp;
+
         if (stakes[msg.sender][stakeIndex]._stakeRewardType == 0) {
             uint256 reward = checkStakeReward(msg.sender, stakeIndex);
 
@@ -256,6 +269,9 @@ contract CliqStaking is AccessControl {
             uint256 totalStake =
                 stakes[msg.sender][stakeIndex]._amount.add(reward);
 
+            stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block
+                .timestamp;
+
             tokenContract.transfer(msg.sender, totalStake);
         } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 1) {
             uint256 cliqReward = checkStakeCliqReward(msg.sender, stakeIndex);
@@ -264,16 +280,6 @@ contract CliqStaking is AccessControl {
                 CLIQ.balanceOf(address(this)) >= cliqReward,
                 "the isn't enough CLIQ in this contract to pay your reward right now"
             );
-
-            totalStakedFunds = totalStakedFunds.sub(
-                stakes[msg.sender][stakeIndex]._amount
-            );
-            totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
-                stakes[msg.sender][stakeIndex]._amount
-            );
-
-            stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block
-                .timestamp;
 
             CLIQ.transfer(msg.sender, cliqReward);
             tokenContract.transfer(

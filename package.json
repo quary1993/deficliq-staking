@@ -11,10 +11,14 @@
   "license": "ISC",
   "devDependencies": {
     "@openzeppelin/truffle-upgrades": "^1.2.1",
-    "truffle": "^5.1.51"
+    "truffle": "^5.1.51",
+    "web3-provider-engine": "^16.0.1"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^3.3.0",
-    "@truffle/hdwallet-provider": "^1.1.1"
+    "@truffle/hdwallet-provider": "^1.1.1",
+    "@trufflesuite/web3-provider-engine": "^15.0.13-1",
+    "@types/web3-provider-engine": "^14.0.0",
+    "ethereumjs-util": "^7.0.7"
   }
 }
