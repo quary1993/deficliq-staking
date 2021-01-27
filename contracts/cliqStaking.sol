@@ -23,8 +23,10 @@ contract CliqStaking is AccessControl {
     struct YieldType {
         bytes32 _packageName;
         uint256 _daysLocked;
+        uint256 _daysBlocked;
         uint256 _packageInterest;
         uint256 _packageCliqReward; // the number of cliq token received for each native token staked
+        uint256 _earlyPenalty;
     }
 
     IERC20 public tokenContract;
@@ -82,9 +84,9 @@ contract CliqStaking is AccessControl {
         tokenContract = IERC20(_stakedToken);
         CLIQ = IERC20(_CLIQ);
         //define packages here
-        _definePackage("Silver Package", 30, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
-        _definePackage("Gold Package", 60, 18, 1500000); // 1.5 cliq for 1 token staked
-        _definePackage("Platinum Package", 90, 30, 2000000); // 2 cliq for 1 token staked
+        _definePackage("Silver Package", 30, 15, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
+        _definePackage("Gold Package", 60, 30, 18, 1500000); // 1.5 cliq for 1 token staked
+        _definePackage("Platinum Package", 90, 45, 30, 2000000); // 2 cliq for 1 token staked
     }
 
     function stakesLength(address _address) external view returns (uint256) {
@@ -121,6 +123,7 @@ contract CliqStaking is AccessControl {
         currentStake._timestamp = block.timestamp;
         currentStake._packageName = _packageName;
         currentStake._stakeRewardType = _stakeRewardType;
+        currentStake._withdrawnTimestamp = 0;
         stakes[msg.sender].push(currentStake);
 
         //if user is not declared as a staker, push him into the staker array
@@ -147,7 +150,7 @@ contract CliqStaking is AccessControl {
     function checkStakeReward(address _address, uint256 stakeIndex)
         public
         view
-        returns (uint256)
+        returns (uint256 yieldReward, uint256 timeDiff)
     {
         require(
             stakes[_address][stakeIndex]._stakeRewardType == 0,
@@ -166,7 +169,8 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageInterest;
 
-        uint256 timeDiff = currentTime.sub(stakingTime);
+        timeDiff = currentTime.sub(stakingTime);
+
         require(
             timeDiff >= 0,
             "Staking time cannot be later than current time"
@@ -174,7 +178,7 @@ contract CliqStaking is AccessControl {
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so can fucking test stuff
 
-        uint256 yieldReward = 0;
+        yieldReward = 0;
         uint256 totalStake = stakes[_address][stakeIndex]._amount;
 
         // for each period of days defined in the package, compound the interest
@@ -187,14 +191,12 @@ contract CliqStaking is AccessControl {
 
             yieldPeriods--;
         }
-
-        return yieldReward;
     }
 
     function checkStakeCliqReward(address _address, uint256 stakeIndex)
         public
         view
-        returns (uint256)
+        returns (uint256 yieldReward, uint256 timeDiff)
     {
         require(
             stakes[_address][stakeIndex]._stakeRewardType == 1,
@@ -213,7 +215,7 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageCliqReward;
 
-        uint256 timeDiff = currentTime.sub(stakingTime);
+        timeDiff = currentTime.sub(stakingTime);
         require(
             timeDiff >= 0,
             "Staking time cannot be later than current time"
@@ -221,14 +223,13 @@ contract CliqStaking is AccessControl {
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
 
-        uint256 yieldReward =
-            stakes[_address][stakeIndex]._amount.mul(packageCliqInterest);
+        yieldReward = stakes[_address][stakeIndex]._amount.mul(
+            packageCliqInterest
+        );
 
         yieldReward = yieldReward.div(cliqRewardUnits);
 
         yieldReward = yieldReward.mul(yieldPeriods);
-
-        return yieldReward;
     }
 
     function unstake(uint256 stakeIndex) public {
@@ -255,11 +256,19 @@ contract CliqStaking is AccessControl {
         stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block.timestamp;
 
         if (stakes[msg.sender][stakeIndex]._stakeRewardType == 0) {
-            uint256 reward = checkStakeReward(msg.sender, stakeIndex);
+            (uint256 reward, uint256 daysSpent) =
+                checkStakeReward(msg.sender, stakeIndex);
 
             require(
                 rewardProviderTokenAllowance > reward,
                 "Token creators did not place enough liquidity in the contract for your reward to be paid"
+            );
+
+            require(
+                daysSpent >
+                    packages[stakes[msg.sender][stakeIndex]._packageName]
+                        ._daysLocked,
+                "cannot unstake sooner than the blocked time time"
             );
 
             rewardProviderTokenAllowance = rewardProviderTokenAllowance.sub(
@@ -274,11 +283,19 @@ contract CliqStaking is AccessControl {
 
             tokenContract.transfer(msg.sender, totalStake);
         } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 1) {
-            uint256 cliqReward = checkStakeCliqReward(msg.sender, stakeIndex);
+            (uint256 cliqReward, uint256 daysSpent) =
+                checkStakeCliqReward(msg.sender, stakeIndex);
 
             require(
                 CLIQ.balanceOf(address(this)) >= cliqReward,
                 "the isn't enough CLIQ in this contract to pay your reward right now"
+            );
+
+            require(
+                daysSpent >
+                    packages[stakes[msg.sender][stakeIndex]._packageName]
+                        ._daysLocked,
+                "cannot unstake sooner than the blocked time time"
             );
 
             CLIQ.transfer(msg.sender, cliqReward);
@@ -309,6 +326,18 @@ contract CliqStaking is AccessControl {
         );
         totalStakedBalance[msg.sender] = totalStakedBalance[msg.sender].sub(
             stakes[msg.sender][stakeIndex]._amount
+        );
+
+        uint256 daysSpent =
+            block.timestamp.sub(stakes[msg.sender][stakeIndex]._timestamp).div(
+                86400
+            ); //86400
+
+        require(
+            daysSpent >
+                packages[stakes[msg.sender][stakeIndex]._packageName]
+                    ._daysLocked,
+            "cannot unstake sooner than the blocked time time"
         );
 
         tokenContract.transfer(
@@ -368,6 +397,7 @@ contract CliqStaking is AccessControl {
     function _definePackage(
         bytes32 _name,
         uint256 _days,
+        uint256 _daysBlocked,
         uint256 _packageInterest,
         uint256 _packageCliqReward
     ) private {
@@ -376,7 +406,7 @@ contract CliqStaking is AccessControl {
         package._daysLocked = _days;
         package._packageInterest = _packageInterest;
         package._packageCliqReward = _packageCliqReward;
-
+        package._daysBlocked = _daysBlocked;
         packages[_name] = package;
         packageNames.push(_name);
     }
