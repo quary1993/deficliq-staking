@@ -169,7 +169,7 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageInterest;
 
-        timeDiff = currentTime.sub(stakingTime);
+        timeDiff = currentTime.sub(stakingTime).div(86400);
 
         require(
             timeDiff >= 0,
@@ -215,7 +215,7 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageCliqReward;
 
-        timeDiff = currentTime.sub(stakingTime);
+        timeDiff = currentTime.sub(stakingTime).div(86400);
         require(
             timeDiff >= 0,
             "Staking time cannot be later than current time"
