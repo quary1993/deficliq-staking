@@ -333,19 +333,7 @@ contract CliqStaking is AccessControl {
         emit ForcefullyWithdrawn(msg.sender, stakeIndex);
     }
 
-    // function parkFunds(uint256 _parkedAmount, address tokenAddr)
-    //     public
-    //     onlyMaintainer
-    //     returns (bool)
-    // {
-    //     emit FundsParked(msg.sender, tokenAddr, _parkedAmount);
-    //     return IERC20(tokenAddr).transfer(msg.sender, _parkedAmount);
-    // }
-
-    // function parkETH(uint256 _parkedAmount) public onlyMaintainer {
-    //     emit ETHParked(msg.sender, _parkedAmount);
-    //     msg.sender.transfer(_parkedAmount);
-    // }
+   
 
     function pauseStaking() public onlyMaintainer {
         paused = true;
