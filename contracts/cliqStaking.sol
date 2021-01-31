@@ -10,7 +10,7 @@ contract CliqStaking is AccessControl {
 
     string public constant NAME = "Cliq Staking Contract";
     bytes32 public constant REWARD_PROVIDER = keccak256("REWARD_PROVIDER"); // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
-
+    uint256 private constant TIME_UNIT = 86400;
     // we can improve this with a "unstaked:false" flag when the user force withdraws the funds
     // so he can collect the reward later
     struct Stake {
@@ -80,7 +80,7 @@ contract CliqStaking is AccessControl {
         tokenContract = IERC20(_stakedToken);
         CLIQ = IERC20(_CLIQ);
         //define packages here
-        _definePackage("Silver Package", 30, 15, 1740084, 1000000); // in 30 days you receive: 1.740084% of staked token OR 1 cliq for 1 token staked
+        _definePackage("Silver Package", 30, 15, 1740084, 1000000); // in 30 days you receive: 1.740084% of staked token OR 1 cliq for 1 token staked || 6 decimals
         _definePackage("Gold Package", 60, 30, 4735920, 1500000); // 1.5 cliq for 1 token staked
         _definePackage("Platinum Package", 90, 45, 11217430, 2000000); // 2 cliq for 1 token staked
     }
@@ -166,7 +166,7 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageInterest;
 
-        timeDiff = currentTime.sub(stakingTime).div(86400);
+        timeDiff = currentTime.sub(stakingTime).div(TIME_UNIT);
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so can fucking test stuff
 
@@ -208,7 +208,7 @@ contract CliqStaking is AccessControl {
             packages[stakes[_address][stakeIndex]._packageName]
                 ._packageCliqReward;
 
-        timeDiff = currentTime.sub(stakingTime).div(86400);
+        timeDiff = currentTime.sub(stakingTime).div(TIME_UNIT);
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
 
@@ -316,7 +316,7 @@ contract CliqStaking is AccessControl {
 
         uint256 daysSpent =
             block.timestamp.sub(stakes[msg.sender][stakeIndex]._timestamp).div(
-                86400
+                TIME_UNIT
             ); //86400
 
         require(
