@@ -8,7 +8,8 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 contract CliqStaking is AccessControl {
     using SafeMath for uint256;
 
-    string public constant name = "Cliq Staking Contract";
+    string public constant NAME = "Cliq Staking Contract";
+    bytes32 public constant REWARD_PROVIDER = keccak256("REWARD_PROVIDER"); // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
 
     // we can improve this with a "unstaked:false" flag when the user force withdraws the funds
     // so he can collect the reward later
@@ -26,7 +27,6 @@ contract CliqStaking is AccessControl {
         uint256 _daysBlocked;
         uint256 _packageInterest;
         uint256 _packageCliqReward; // the number of cliq token received for each native token staked
-        uint256 _earlyPenalty;
     }
 
     IERC20 public tokenContract;
@@ -43,7 +43,7 @@ contract CliqStaking is AccessControl {
     uint256 rewardProviderTokenAllowance = 0;
     uint256 public totalStakedFunds = 0;
     uint256 cliqRewardUnits = 1000000; // ciq reward for 1.000.000 tokens staked
-    bytes32 public constant REWARD_PROVIDER = keccak256("REWARD_PROVIDER"); // i upgraded solc and used REWARD_PROVIDER instead of whitelist role and DEFAULT_ADMIN_ROLE instead of whiteloist admin
+    bool public paused = false;
 
     event NativeTokenRewardAdded(address indexed _from, uint256 _val);
     event NativeTokenRewardRemoved(address indexed _to, uint256 _val);
@@ -56,12 +56,8 @@ contract CliqStaking is AccessControl {
     );
     event Unstaked(address indexed _usr, uint256 stakeIndex);
     event ForcefullyWithdrawn(address indexed _usr, uint256 stakeIndex);
-    event FundsParked(
-        address indexed _usr,
-        address indexed _token,
-        uint256 _amount
-    );
-    event ETHParked(address indexed _usr, uint256 _amount);
+    event Paused();
+    event Unpaused();
 
     modifier onlyRewardProvider() {
         require(
@@ -102,6 +98,7 @@ contract CliqStaking is AccessControl {
         bytes32 _packageName,
         uint16 _stakeRewardType
     ) public {
+        require(paused == false, "Staking is  paused");
         require(_amount > 0, " stake a positive number of tokens ");
         require(
             packages[_packageName]._daysLocked > 0,
@@ -171,11 +168,6 @@ contract CliqStaking is AccessControl {
 
         timeDiff = currentTime.sub(stakingTime).div(86400);
 
-        require(
-            timeDiff >= 0,
-            "Staking time cannot be later than current time"
-        );
-
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so can fucking test stuff
 
         yieldReward = 0;
@@ -216,10 +208,6 @@ contract CliqStaking is AccessControl {
                 ._packageCliqReward;
 
         timeDiff = currentTime.sub(stakingTime).div(86400);
-        require(
-            timeDiff >= 0,
-            "Staking time cannot be later than current time"
-        );
 
         uint256 yieldPeriods = timeDiff.div(daysLocked); // the _days is in seconds for now so i can fucking test stuff
 
@@ -234,7 +222,7 @@ contract CliqStaking is AccessControl {
 
     function unstake(uint256 stakeIndex) public {
         require(
-            stakes[msg.sender][stakeIndex]._amount > 0,
+            stakeIndex < stakes[msg.sender].length,
             "The stake you are searching for is not defined"
         );
         require(
@@ -267,7 +255,7 @@ contract CliqStaking is AccessControl {
             require(
                 daysSpent >
                     packages[stakes[msg.sender][stakeIndex]._packageName]
-                        ._daysLocked,
+                        ._daysBlocked,
                 "cannot unstake sooner than the blocked time time"
             );
 
@@ -277,9 +265,6 @@ contract CliqStaking is AccessControl {
 
             uint256 totalStake =
                 stakes[msg.sender][stakeIndex]._amount.add(reward);
-
-            stakes[msg.sender][stakeIndex]._withdrawnTimestamp = block
-                .timestamp;
 
             tokenContract.transfer(msg.sender, totalStake);
         } else if (stakes[msg.sender][stakeIndex]._stakeRewardType == 1) {
@@ -294,7 +279,7 @@ contract CliqStaking is AccessControl {
             require(
                 daysSpent >
                     packages[stakes[msg.sender][stakeIndex]._packageName]
-                        ._daysLocked,
+                        ._daysBlocked,
                 "cannot unstake sooner than the blocked time time"
             );
 
@@ -336,7 +321,7 @@ contract CliqStaking is AccessControl {
         require(
             daysSpent >
                 packages[stakes[msg.sender][stakeIndex]._packageName]
-                    ._daysLocked,
+                    ._daysBlocked,
             "cannot unstake sooner than the blocked time time"
         );
 
@@ -348,18 +333,28 @@ contract CliqStaking is AccessControl {
         emit ForcefullyWithdrawn(msg.sender, stakeIndex);
     }
 
-    function parkFunds(uint256 _parkedAmount, address tokenAddr)
-        public
-        onlyMaintainer
-        returns (bool)
-    {
-        emit FundsParked(msg.sender, tokenAddr, _parkedAmount);
-        return IERC20(tokenAddr).transfer(msg.sender, _parkedAmount);
+    // function parkFunds(uint256 _parkedAmount, address tokenAddr)
+    //     public
+    //     onlyMaintainer
+    //     returns (bool)
+    // {
+    //     emit FundsParked(msg.sender, tokenAddr, _parkedAmount);
+    //     return IERC20(tokenAddr).transfer(msg.sender, _parkedAmount);
+    // }
+
+    // function parkETH(uint256 _parkedAmount) public onlyMaintainer {
+    //     emit ETHParked(msg.sender, _parkedAmount);
+    //     msg.sender.transfer(_parkedAmount);
+    // }
+
+    function pauseStaking() public onlyMaintainer {
+        paused = true;
+        emit Paused();
     }
 
-    function parkETH(uint256 _parkedAmount) public onlyMaintainer {
-        emit ETHParked(msg.sender, _parkedAmount);
-        msg.sender.transfer(_parkedAmount);
+    function unpauseStaking() public onlyMaintainer {
+        paused = false;
+        emit Unpaused();
     }
 
     function addStakedTokenReward(uint256 _amount)
