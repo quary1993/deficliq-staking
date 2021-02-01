@@ -80,9 +80,9 @@ contract CliqStaking is AccessControl {
         tokenContract = IERC20(_stakedToken);
         CLIQ = IERC20(_CLIQ);
         //define packages here
-        _definePackage("Silver Package", 30, 15, 1740084, 1000000); // in 30 days you receive: 1.740084% of staked token OR 1 cliq for 1 token staked || 6 decimals
-        _definePackage("Gold Package", 60, 30, 4735920, 1500000); // 1.5 cliq for 1 token staked
-        _definePackage("Platinum Package", 90, 45, 11217430, 2000000); // 2 cliq for 1 token staked
+        _definePackage("Silver Package", 30, 15, 8, 1000000); // in 30 days you receive: 15% of staked token OR 1 cliq for 1 token staked
+        _definePackage("Gold Package", 60, 30, 18, 1500000); // 1.5 cliq for 1 token staked
+        _definePackage("Platinum Package", 90, 45, 30, 2000000); // 2 cliq for 1 token staked
     }
 
     function stakesLength(address _address) external view returns (uint256) {
@@ -175,8 +175,7 @@ contract CliqStaking is AccessControl {
 
         // for each period of days defined in the package, compound the interest
         while (yieldPeriods > 0) {
-            uint256 currentReward =
-                totalStake.mul(packageInterest).div(100000000); //6 decimals to package interest percentage
+            uint256 currentReward = totalStake.mul(packageInterest).div(100);
 
             totalStake = totalStake.add(currentReward);
 
