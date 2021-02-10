@@ -2,3 +2,4 @@ node_modules
 truffle-config.json
 truffle-config.js
 build
+coverage
