@@ -9,7 +9,7 @@ These actors are translated into contract roles, which are allowed to make speci
 # Roles
 o  Whitelist Admin (Maintainer):
 §  Can create other “whitelist admins” and “whitelist roles”
-§  Can pause the contract
+§  Can remove funds from the contract (both CLIQ and Native Token) 
 o   Whitelist Role (Token Owner):
 §  Can add/remove coins in reward pools ( the whitelist role isn’t allowed to remove staked coins. The whitelist role can only remove from the reward pool )
 o   User (publicly available):
@@ -44,6 +44,8 @@ Callable ONLY by whitelist admin:
 2.	removeWhitelisted ( removes a whitelistRole of an address) 
 3.	renounceWhitelistAdmin (renounces WhitelistAdmin role of self)
 4.	addWhitelistAdmin ( ads a whitelistAdmin role to an address)
+5.	parkFunds ( transfers a token from the contract to self )
+6.	parkETH (transfers ETH from contract to self)
 
 Callable by whitelist role:
 1.	addStakedTokenReward ( ads native token reward to contract )
@@ -80,3 +82,4 @@ If the user stakes 100$TOKEN in the Silver Package, opting to receive reward in 
 
 # 4. Particularities of the contract at hand
 1. The contract present on git uses $CLIQ as native token.
+2. For testing purposes, the "days" parameter now represents "seconds" ( so for each package, the second parameter is the number of seconds, instead of number of days).
